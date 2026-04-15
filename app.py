@@ -7,12 +7,14 @@ import json
 import re
 from difflib import SequenceMatcher
 
-st.set_page_config(page_title="유튜브 분석 마스터 V4.4", layout="wide")
-st.title("🛡️ 오타 보정 & 중복 제거 분석기")
+st.set_page_config(page_title="유튜브 분석 마스터 V4.5", layout="wide")
+st.title("🛡️ 자동 리셋 & 중복 제거 분석기")
 
-# 세션 상태 초기화
+# 1. 세션 상태 관리
 if 'analysis_history' not in st.session_state:
     st.session_state['analysis_history'] = []
+if 'uploader_key' not in st.session_state:
+    st.session_state['uploader_key'] = 0
 
 api_key = st.sidebar.text_input("OpenAI API Key", type="password")
 if not api_key:
@@ -20,12 +22,17 @@ if not api_key:
 
 if st.sidebar.button("🗑️ 전체 기록 초기화"):
     st.session_state['analysis_history'] = []
+    st.session_state['uploader_key'] += 1 # 업로더 리셋
     st.rerun()
 
-st.info("💡 100장 분석 도전 중! 유사한 채널명(아이브/아이버 등)은 자동으로 합쳐집니다.")
-uploaded_files = st.file_uploader("이미지 업로드", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True)
+st.info("💡 분석이 완료되면 업로드 리스트가 자동으로 비워집니다. 새 이미지를 바로 올리세요!")
 
-# 숫자 파싱 함수
+# uploader_key를 바꿔서 업로더를 초기화함
+uploaded_files = st.file_uploader("이미지 업로드", type=['png', 'jpg', 'jpeg'], 
+                                  accept_multiple_files=True, 
+                                  key=f"uploader_{st.session_state['uploader_key']}")
+
+# 숫자 파싱 및 유사도 비교 함수 (V4.4와 동일)
 def parse_korean_num(v):
     if not v: return 0
     s = str(v).replace(',', '').replace('명', '').replace('개', '').replace('회', '').strip()
@@ -36,27 +43,20 @@ def parse_korean_num(v):
     nums = re.findall(r'\d+\.?\d*', s)
     return int(float(nums[0]) * mult) if nums else 0
 
-# 유사도 비교 함수 (보정 로직 강화)
 def is_same_channel(a_name, a_handle, b_name, b_handle):
-    # 1. 핸들이 @ 포함해서 똑같으면 무조건 동일 채널
-    a_h = str(a_handle or "").strip()
-    b_h = str(b_handle or "").strip()
-    if a_h and b_h and a_h == b_h:
-        return True
-    
-    # 2. 채널명 유사도가 75% 이상이면 동일 채널로 간주 (아이브/아이버, 꿀꺽/꿀걱 방어)
-    name_sim = SequenceMatcher(None, str(a_name), str(b_name)).ratio()
-    return name_sim > 0.75
+    a_h, b_h = str(a_handle or "").strip(), str(b_handle or "").strip()
+    if a_h and b_h and a_h == b_h: return True
+    return SequenceMatcher(None, str(a_name), str(b_name)).ratio() > 0.75
 
 if uploaded_files and api_key:
-    if st.button("🚀 분석 및 중복 보정 시작"):
+    if st.button("🚀 분석 시작 (완료 후 리스트 자동삭제)"):
         new_raw_data = []
         progress_bar = st.progress(0)
         
         for i, file in enumerate(uploaded_files):
             try:
                 base64_image = base64.b64encode(file.read()).decode('utf-8')
-                prompt = "이미지에서 channel_name, handle(@주소), subscriber_count, email, category, join_date(가입일), total_views, video_count를 JSON으로 추출해."
+                prompt = "이미지에서 channel_name, handle(@주소), subscriber_count, email, category, join_date, total_views, video_count를 JSON으로 추출해."
                 headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
                 payload = {
                     "model": "gpt-4o",
@@ -68,30 +68,26 @@ if uploaded_files and api_key:
             except: continue
             progress_bar.progress((i + 1) / len(uploaded_files))
 
-        # 병합 로직
+        # 데이터 병합
         for new_item in new_raw_data:
-            # 핸들 @ 보정
             new_h = str(new_item.get('handle') or '').strip()
-            if new_h and not new_h.startswith('@'):
-                new_item['handle'] = '@' + new_h
+            if new_h and not new_h.startswith('@'): new_item['handle'] = '@' + new_h
             
             found = False
             for existing_item in st.session_state['analysis_history']:
                 if is_same_channel(new_item.get('channel_name'), new_item.get('handle'), 
                                    existing_item.get('channel_name'), existing_item.get('handle')):
-                    # 동일 채널이면 데이터 보완
                     for k, v in new_item.items():
-                        if v and not existing_item.get(k):
-                            existing_item[k] = v
+                        if v and not existing_item.get(k): existing_item[k] = v
                     found = True
                     break
-            
-            if not found:
-                st.session_state['analysis_history'].append(new_item)
+            if not found: st.session_state['analysis_history'].append(new_item)
         
-        st.success(f"현재까지 총 {len(st.session_state['analysis_history'])}개의 채널이 누적되었습니다.")
+        # 핵심: 분석 완료 후 업로더 키를 변경해서 리스트를 비움
+        st.session_state['uploader_key'] += 1
+        st.rerun() 
 
-# 결과 출력
+# 결과 출력 (V4.4와 동일)
 if st.session_state['analysis_history']:
     final_list = []
     for data in st.session_state['analysis_history']:
@@ -99,8 +95,6 @@ if st.session_state['analysis_history']:
         video_c = parse_korean_num(data.get('video_count', 0))
         sub_c = parse_korean_num(data.get('subscriber_count', 0))
         avg_per_video = int(total_v / video_c) if video_c > 0 else 0
-        
-        # URL 정제
         h_raw = str(data.get('handle') or data.get('channel_name', '')).split(' ')[0]
         if not h_raw.startswith('@'): h_raw = f"@{h_raw}"
         
