@@ -5,7 +5,7 @@ import pandas as pd
 from io import BytesIO
 import json
 
-st.set_page_config(page_title="유튜브 채널 세트 분석기 V3.5", layout="wide")
+st.set_page_config(page_title="유튜브 분석기 V3.6", layout="wide")
 st.title("👨‍🔧 유튜브 채널 정보 병합 & 엑셀 추출기")
 
 api_key = st.sidebar.text_input("OpenAI API Key", type="password")
@@ -95,10 +95,11 @@ if uploaded_files and api_key:
         if final_list:
             df = pd.DataFrame(final_list)
             st.subheader("📋 분석 결과 미리보기")
-            st.dataframe(df.astype(str), column_config={"유튜브 주소": st.column_config.Link_Column()})
+            # 에러 발생했던 Link_Column 대신 기본 데이터프레임으로 출력
+            st.dataframe(df.astype(str))
             
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 df.to_excel(writer, index=False, sheet_name='Sheet1')
             st.download_button(label="📥 최종 엑셀 다운로드", data=output.getvalue(), file_name="youtube_master_list.xlsx")
-            status_text.success("✅ 모든 분석 완료!")
+            status_text.success("✅ 모든 분석 완료! 엑셀을 확인해 주세요.")
