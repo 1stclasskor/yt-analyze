@@ -5,7 +5,7 @@ import pandas as pd
 from io import BytesIO
 import json
 
-st.set_page_config(page_title="유튜브 채널 세트 분석기 V3.4", layout="wide")
+st.set_page_config(page_title="유튜브 채널 세트 분석기 V3.5", layout="wide")
 st.title("👨‍🔧 유튜브 채널 정보 병합 & 엑셀 추출기")
 
 api_key = st.sidebar.text_input("OpenAI API Key", type="password")
@@ -24,29 +24,23 @@ if uploaded_files and api_key:
 
         for i, file in enumerate(uploaded_files):
             status_text.text(f"🔍 {i+1}/{len(uploaded_files)} 번째 이미지 분석 중...")
-            base64_image = base64.b64encode(file.read()).decode('utf-8')
-
-            prompt = """
-            이 유튜브 캡처 이미지에서 정보를 추출해 JSON으로만 답해줘.
-            키값: channel_name, handle, email, category, views, total_views, video_count, growth_factor
-            - handle은 반드시 @를 포함해야 합니다.
-            - 데이터가 없으면 null로 표시하세요.
-            """
-
-            headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
-            payload = {
-                "model": "gpt-4o",
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
-                    ]
-                }],
-                "response_format": { "type": "json_object" }
-            }
-
             try:
+                base64_image = base64.b64encode(file.read()).decode('utf-8')
+                prompt = "이미지에서 channel_name, handle(@포함), email, category, views(조회수리스트), total_views, video_count, growth_factor를 JSON으로 추출해줘."
+                
+                headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+                payload = {
+                    "model": "gpt-4o",
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}
+                        ]
+                    }],
+                    "response_format": { "type": "json_object" }
+                }
+                
                 response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
                 res_data = response.json()['choices'][0]['message']['content']
                 all_raw_data.append(json.loads(res_data))
@@ -55,7 +49,6 @@ if uploaded_files and api_key:
             
             progress_bar.progress((i + 1) / len(uploaded_files))
 
-        # 데이터 병합
         merged_dict = {}
         for item in all_raw_data:
             h = item.get('handle')
@@ -69,17 +62,14 @@ if uploaded_files and api_key:
                     if key == 'views' and value:
                         if isinstance(merged_dict[h]['views'], list):
                             merged_dict[h]['views'].extend(value)
-                        else:
-                            merged_dict[h]['views'] = value
 
         final_list = []
         for h, data in merged_dict.items():
-            # 1. 유튜브 주소 생성
             clean_handle = h.replace('@', '')
             channel_url = f"https://www.youtube.com/@{clean_handle}"
             
-            # 2. 조회수 계산
             views = data.get('views', [])
+            avg_val = 0
             if isinstance(views, list) and len(views) > 0:
                 def clean_view(v):
                     v = str(v).replace('조회수', '').replace('회', '').strip()
@@ -89,10 +79,7 @@ if uploaded_files and api_key:
                     except: return 0
                 clean_views = [clean_view(v) for v in views]
                 avg_val = int(sum(clean_views[:5]) / min(len(clean_views), 5))
-            else:
-                avg_val = 0
             
-            # 3. 데이터 재구성
             ordered_data = {
                 "채널명": data.get('channel_name'),
                 "유튜브 주소": channel_url,
@@ -100,3 +87,18 @@ if uploaded_files and api_key:
                 "이메일": data.get('email'),
                 "최근 5개 평균 조회수": avg_val,
                 "총 조회수": data.get('total_views'),
+                "영상 개수": data.get('video_count'),
+                "떡상 요인 분석": data.get('growth_factor')
+            }
+            final_list.append(ordered_data)
+
+        if final_list:
+            df = pd.DataFrame(final_list)
+            st.subheader("📋 분석 결과 미리보기")
+            st.dataframe(df.astype(str), column_config={"유튜브 주소": st.column_config.Link_Column()})
+            
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df.to_excel(writer, index=False, sheet_name='Sheet1')
+            st.download_button(label="📥 최종 엑셀 다운로드", data=output.getvalue(), file_name="youtube_master_list.xlsx")
+            status_text.success("✅ 모든 분석 완료!")
